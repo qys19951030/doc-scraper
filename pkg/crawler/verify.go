@@ -136,6 +136,10 @@ type Verifier struct {
 	jsonl   string
 	log     *slog.Logger
 
+	// indexPath is the search index database passed to Verify/VerifyAndFix,
+	// retained for report detail lines.
+	indexPath string
+
 	cp *process.ContentProcessor
 }
 
@@ -186,6 +190,7 @@ func (v *Verifier) CheckPreconditions() error {
 // Verify scans the local corpus and returns every inconsistency found. It is
 // read-only.
 func (v *Verifier) Verify(ctx context.Context, idxPath string) (*VerifyReport, error) {
+	v.indexPath = idxPath
 	man, err := v.loadManifest()
 	if err != nil {
 		return nil, fmt.Errorf("load manifest: %w", err)
@@ -212,6 +217,7 @@ func (v *Verifier) Verify(ctx context.Context, idxPath string) (*VerifyReport, e
 	}
 
 	report := v.newReport(false)
+	report.IndexPath = idxPath
 	report.Findings = groupFindings(findings)
 	report.FindingsCount = countEntries(report.Findings)
 	return report, nil

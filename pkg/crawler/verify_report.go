@@ -22,7 +22,71 @@ func RenderVerifyJSON(w io.Writer, r *VerifyReport) error {
 }
 
 // renderHumanReport writes the human-readable form of a VerifyReport to w.
+// Counts and item lists match the structured report exactly: one line per
+// concrete page or file, with its output-dir-relative path and URL.
 func renderHumanReport(w io.Writer, r *VerifyReport) {
+	fmt.Fprintf(w, "Verify report for site %q\n", r.SiteKey)
+	fmt.Fprintf(w, "Output directory: %s\n", r.OutputDir)
+	if r.IndexPath != "" {
+		fmt.Fprintf(w, "Search index: %s\n", r.IndexPath)
+	}
+	if r.Fixed {
+		fmt.Fprintf(w, "Mode: verify --fix (%d repair action(s) applied)\n", len(r.Fixes))
+	} else {
+		fmt.Fprintln(w, "Mode: verify (read-only)")
+	}
+	fmt.Fprintln(w)
+
+	if r.FindingsCount == 0 {
+		fmt.Fprintln(w, "No inconsistencies found.")
+	} else {
+		fmt.Fprintf(w, "Findings: %d issue(s) in %d categor(y/ies)\n", r.FindingsCount, len(r.Findings))
+		writeGroups(w, r.Findings)
+	}
+
+	if r.Fixed {
+		fmt.Fprintln(w)
+		if len(r.Fixes) == 0 {
+			fmt.Fprintln(w, "No repairs were needed.")
+		} else {
+			fmt.Fprintf(w, "Repairs applied: %d\n", len(r.Fixes))
+			for _, f := range r.Fixes {
+				line := fmt.Sprintf("- [%s] %s", f.Category, f.Action)
+				if f.Path != "" {
+					line += "  " + f.Path
+				}
+				if f.URL != "" {
+					line += "  " + f.URL
+				}
+				for _, k := range sortedDetailKeys(f.Detail) {
+					line += fmt.Sprintf("  %s=%s", k, f.Detail[k])
+				}
+				fmt.Fprintln(w, line)
+			}
+		}
+
+		fmt.Fprintln(w)
+		if r.ResidualCount == 0 {
+			fmt.Fprintln(w, "Re-verification: no remaining issues.")
+		} else {
+			fmt.Fprintf(w, "Re-verification: %d issue(s) remain that cannot be repaired locally\n", r.ResidualCount)
+			writeGroups(w, r.Residual)
+		}
+	}
+}
+
+// writeGroups renders one titled, counted section per issue category.
+func writeGroups(w io.Writer, groups []IssueGroup) {
+	for _, g := range groups {
+		title := humanIssueTitles[g.Category]
+		if title == "" {
+			title = g.Category
+		}
+		fmt.Fprintf(w, "\n[%s] %s: %d\n", g.Category, title, g.Count)
+		for _, e := range g.Entries {
+			fmt.Fprintf(w, "  - %s\n", formatEntry(e))
+		}
+	}
 }
 
 // renderJSONReport writes the machine-readable form of r to w.

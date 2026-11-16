@@ -556,9 +556,72 @@ func (v *Verifier) checkImages(man *manifestSnapshot) map[string][]IssueEntry {
 }
 
 // checkIndex covers category 7: pages missing from or stale in the search
-// index. An unreadable index is reported through the returned error.
+// index. The index stores one content_hash per chunked page URL, so both URL
+// presence and hash agreement are checked. A nil index (no database file)
+// means every manifest page is reported missing from the index.
 func (v *Verifier) checkIndex(ctx context.Context, man *manifestSnapshot, idx *index.Index) map[string][]IssueEntry {
-	return map[string][]IssueEntry{}
+	out := map[string][]IssueEntry{}
+
+	var indexed map[string]string
+	if idx != nil {
+		hashes, err := idx.ChunkedHashes(ctx, v.siteKey)
+		if err != nil {
+			v.log.Warn("verify: cannot read search index chunks", "err", err)
+			return out
+		}
+		indexed = hashes
+	} else {
+		indexed = map[string]string{}
+	}
+
+	manifest := make(map[string]string, len(man.pages))
+	for _, p := range man.pages {
+		manifest[p.URL] = p.ContentHash
+	}
+
+	for _, p := range man.pages {
+		hash, ok := indexed[p.URL]
+		if !ok {
+			out[IssueIndexMissingPage] = append(out[IssueIndexMissingPage], IssueEntry{
+				Category: IssueIndexMissingPage,
+				URL:      p.URL,
+				Detail:   map[string]string{"index_path": v.indexRelPath()},
+			})
+			continue
+		}
+		if p.ContentHash != "" && hash != p.ContentHash {
+			out[IssueIndexMissingPage] = append(out[IssueIndexMissingPage], IssueEntry{
+				Category: IssueIndexMissingPage,
+				URL:      p.URL,
+				Detail: map[string]string{
+					"problem":       "indexed content hash is stale",
+					"manifest_hash": p.ContentHash,
+					"index_hash":    hash,
+					"index_path":    v.indexRelPath(),
+				},
+			})
+		}
+	}
+	for u := range indexed {
+		if _, ok := manifest[u]; !ok {
+			out[IssueIndexStalePage] = append(out[IssueIndexStalePage], IssueEntry{
+				Category: IssueIndexStalePage,
+				URL:      u,
+				Detail:   map[string]string{"index_path": v.indexRelPath()},
+			})
+		}
+	}
+	return out
+}
+
+// indexRelPath records the configured index location for reports; the file
+// itself lives outside the output directory, so the configured path is shown
+// verbatim rather than made relative.
+func (v *Verifier) indexRelPath() string {
+	if v.indexPath == "" {
+		return ""
+	}
+	return v.indexPath
 }
 
 // mergeIssueMaps folds src into dst.
