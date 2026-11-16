@@ -7,11 +7,16 @@ package crawler
 import (
 	"context"
 	"errors"
+	"fmt"
+	"io/fs"
 	"log/slog"
 	"net/url"
+	"os"
+	"path/filepath"
 
 	"github.com/Sriram-PR/doc-scraper/v2/pkg/config"
 	"github.com/Sriram-PR/doc-scraper/v2/pkg/process"
+	"github.com/Sriram-PR/doc-scraper/v2/pkg/storage/index"
 )
 
 // Issue category identifiers. Every problem the Verifier can detect has a
@@ -153,13 +158,92 @@ func NewVerifier(appCfg *config.AppConfig, siteCfg *config.SiteConfig, siteKey, 
 // exists, the manifest is present and non-empty, and it carries a crawl_meta
 // summary record. The site-in-config check lives in the command layer.
 func (v *Verifier) CheckPreconditions() error {
+	info, err := os.Stat(v.dir)
+	if err != nil || !info.IsDir() {
+		return &PreconditionError{Reason: "output directory does not exist", Path: v.dir}
+	}
+	manifestPath := filepath.Join(v.dir, v.jsonl)
+	info, err = os.Stat(manifestPath)
+	if err != nil {
+		return &PreconditionError{Reason: "manifest does not exist", Path: manifestPath}
+	}
+	if !info.Mode().IsRegular() || info.Size() == 0 {
+		return &PreconditionError{Reason: "manifest is empty", Path: manifestPath}
+	}
+	man, err := v.loadManifest()
+	if err != nil {
+		return &PreconditionError{Reason: "manifest is unreadable: " + err.Error(), Path: manifestPath}
+	}
+	if len(man.pages) == 0 {
+		return &PreconditionError{Reason: "manifest contains no page records", Path: manifestPath}
+	}
+	if len(man.metas) == 0 {
+		return &PreconditionError{Reason: "manifest contains no crawl_meta summary record", Path: manifestPath}
+	}
 	return nil
 }
 
 // Verify scans the local corpus and returns every inconsistency found. It is
 // read-only.
 func (v *Verifier) Verify(ctx context.Context, idxPath string) (*VerifyReport, error) {
-	return nil, nil
+	man, err := v.loadManifest()
+	if err != nil {
+		return nil, fmt.Errorf("load manifest: %w", err)
+	}
+	disk, err := v.scanDiskPages()
+	if err != nil {
+		return nil, fmt.Errorf("scan markdown files: %w", err)
+	}
+
+	findings := map[string][]IssueEntry{}
+	mergeIssueMaps(findings, v.checkMarkdownPresence(man, disk))
+	mergeIssueMaps(findings, v.checkFingerprints(man, disk))
+	mergeIssueMaps(findings, v.checkCrawlMeta(man))
+	mergeIssueMaps(findings, v.checkLLMsFiles(man))
+	mergeIssueMaps(findings, v.checkImages(man))
+
+	idx, idxErr := v.openIndex(idxPath)
+	if idxErr != nil {
+		return nil, idxErr
+	}
+	if idx != nil {
+		defer func() { _ = idx.Close() }()
+		mergeIssueMaps(findings, v.checkIndex(ctx, man, idx))
+	}
+
+	report := v.newReport(false)
+	report.Findings = groupFindings(findings)
+	report.FindingsCount = countEntries(report.Findings)
+	return report, nil
+}
+
+// newReport assembles the common report header.
+func (v *Verifier) newReport(fixed bool) *VerifyReport {
+	return &VerifyReport{
+		SiteKey:   v.siteKey,
+		OutputDir: v.dir,
+		Fixed:     fixed,
+	}
+}
+
+// openIndex opens the search index when its database file exists. A missing
+// database is not an error: every manifest page is then reported as absent
+// from the index instead.
+func (v *Verifier) openIndex(idxPath string) (*index.Index, error) {
+	if idxPath == "" {
+		return nil, nil
+	}
+	if _, err := os.Stat(idxPath); err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("stat search index: %w", err)
+	}
+	idx, err := index.Open(idxPath, v.appCfg.CrawlHistoryRetention, v.log)
+	if err != nil {
+		return nil, fmt.Errorf("open search index: %w", err)
+	}
+	return idx, nil
 }
 
 // VerifyAndFix repairs every inconsistency that can be rebuilt from local
