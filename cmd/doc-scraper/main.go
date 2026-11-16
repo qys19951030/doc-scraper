@@ -92,6 +92,8 @@ func main() {
 		runSearch(os.Args[2:])
 	case "add":
 		runAdd(os.Args[2:])
+	case "verify":
+		runVerify(os.Args[2:])
 	case "version":
 		if len(os.Args) > 2 {
 			fmt.Fprintf(os.Stderr, "Error: version takes no arguments\n")
@@ -125,6 +127,7 @@ Commands:
   mcp-server  Start MCP server for AI tool integration
   search      Search the crawled corpus from the command line (BM25 over the local index)
   add         Probe a docs site and draft a config entry for it (confirm before write)
+  verify      Offline consistency check and repair of one site's local output
   version     Show version info
 
 Run 'doc-scraper <command> -h' for command-specific help.`)
