@@ -317,10 +317,11 @@ type llmsEntry struct {
 	line  int
 }
 
-var llmsLinkLine = regexpMustCompile(`^\s*-\s*\[([^\]]*)\]\(([^)]+)\)\s*$`)
 var llmsURLLine = regexpMustCompile(`^URL:\s*(\S+)\s*$`)
 
-// parseLLMsIndex reads the "- [title](url)" entries of llms.txt in order.
+// parseLLMsIndex reads the "- [title](url)" entries of llms.txt in order. It
+// splits on the link delimiters rather than a single regex so titles carrying
+// escaped brackets (the crawler's escapeLinkText emits "\[") still parse.
 func parseLLMsIndex(path string) ([]llmsEntry, error) {
 	lines, err := readFileLines(path)
 	if err != nil {
@@ -328,11 +329,21 @@ func parseLLMsIndex(path string) ([]llmsEntry, error) {
 	}
 	var entries []llmsEntry
 	for i, line := range lines {
-		m := llmsLinkLine.FindStringSubmatch(line)
-		if m == nil {
+		trimmed := strings.TrimSpace(line)
+		if !strings.HasPrefix(trimmed, "- [") {
 			continue
 		}
-		entries = append(entries, llmsEntry{title: m[1], url: m[2], line: i + 1})
+		rest := trimmed[len("- "):] // now "[title](url)"
+		closeBracket := strings.Index(rest, "](")
+		if closeBracket <= 0 || !strings.HasSuffix(rest, ")") {
+			continue
+		}
+		title := rest[1:closeBracket]
+		url := rest[closeBracket+2 : len(rest)-1]
+		if url == "" {
+			continue
+		}
+		entries = append(entries, llmsEntry{title: title, url: url, line: i + 1})
 	}
 	return entries, nil
 }

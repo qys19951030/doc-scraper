@@ -162,6 +162,24 @@ func TestCheckLLMsFiles_MissingExtraAndOrder(t *testing.T) {
 	})
 }
 
+// TestParseLLMsIndex_TitleWithEscapedBrackets ensures the parser handles the
+// bracketed titles escapeLinkText produces instead of silently dropping them.
+func TestParseLLMsIndex_TitleWithEscapedBrackets(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, llmsTxtFilename)
+	require.NoError(t, os.WriteFile(path, []byte(
+		"# site\n\n## Pages\n"+
+			`- [Array \[\] methods](https://docs.example.com/arr/)`+"\n"+
+			"- [Plain](https://docs.example.com/plain/)\n",
+	), 0o644))
+	entries, err := parseLLMsIndex(path)
+	require.NoError(t, err)
+	require.Len(t, entries, 2)
+	assert.Equal(t, "https://docs.example.com/arr/", entries[0].url)
+	assert.Contains(t, entries[0].title, "Array")
+	assert.Equal(t, "https://docs.example.com/plain/", entries[1].url)
+}
+
 // TestCheckImages_LocalReferencesResolvedFromPageDir covers category 6,
 // including that remote and data: references are ignored.
 func TestCheckImages_LocalReferencesResolvedFromPageDir(t *testing.T) {
