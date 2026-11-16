@@ -3,6 +3,7 @@ package crawler
 import (
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -23,26 +24,37 @@ func (om *OutputManager) writeLLMsTxtFiles() {
 	if om.jsonlFilePath == "" || om.siteOutputDir == "" {
 		return
 	}
-	in, err := os.Open(om.jsonlFilePath)
+	if err := WriteLLMsFiles(om.jsonlFilePath, om.siteOutputDir, om.siteKey, domainOf(om.siteCfg), om.log); err != nil {
+		om.log.Warn(fmt.Sprintf("llms.txt: %v", err))
+	}
+}
+
+// domainOf returns the configured allowed domain, tolerating a nil config.
+func domainOf(siteCfg *config.SiteConfig) string {
+	if siteCfg == nil {
+		return ""
+	}
+	return siteCfg.AllowedDomain
+}
+
+// WriteLLMsFiles regenerates llms.txt and llms-full.txt from a finalized
+// JSONL manifest, using the exact on-disk format a crawl emits. Shared by
+// crawl finalization and offline verify --fix so the two paths cannot drift.
+func WriteLLMsFiles(jsonlPath, outDir, siteKey, domain string, log *slog.Logger) error {
+	in, err := os.Open(jsonlPath)
 	if err != nil {
-		om.log.Warn(fmt.Sprintf("llms.txt: cannot read JSONL %s: %v", om.jsonlFilePath, err))
-		return
+		return fmt.Errorf("cannot read JSONL %s: %w", jsonlPath, err)
 	}
 	defer in.Close()
 
-	fullPath := filepath.Join(om.siteOutputDir, llmsFullTxtFilename)
+	fullPath := filepath.Join(outDir, llmsFullTxtFilename)
 	fullFile, err := os.Create(fullPath)
 	if err != nil {
-		om.log.Warn(fmt.Sprintf("llms.txt: cannot create %s: %v", fullPath, err))
-		return
+		return fmt.Errorf("cannot create %s: %w", fullPath, err)
 	}
 	defer fullFile.Close()
 
-	domain := ""
-	if om.siteCfg != nil {
-		domain = om.siteCfg.AllowedDomain
-	}
-	fmt.Fprintf(fullFile, "# %s\n\n> Full crawled content from %s.\n\n", om.siteKey, domain)
+	fmt.Fprintf(fullFile, "# %s\n\n> Full crawled content from %s.\n\n", siteKey, domain)
 
 	type pageRef struct{ title, url string }
 	var pages []pageRef
@@ -74,19 +86,17 @@ func (om *OutputManager) writeLLMsTxtFiles() {
 		fmt.Fprintf(fullFile, "---\n\n# %s\n\nURL: %s\n\n%s\n\n", escapeHeading(title), page.URL, page.Content)
 	}
 	if err := scanner.Err(); err != nil {
-		om.log.Warn(fmt.Sprintf("llms.txt: scan error on %s: %v", om.jsonlFilePath, err))
-		return
+		return fmt.Errorf("scan error on %s: %w", jsonlPath, err)
 	}
 
-	indexPath := filepath.Join(om.siteOutputDir, llmsTxtFilename)
+	indexPath := filepath.Join(outDir, llmsTxtFilename)
 	indexFile, err := os.Create(indexPath)
 	if err != nil {
-		om.log.Warn(fmt.Sprintf("llms.txt: cannot create %s: %v", indexPath, err))
-		return
+		return fmt.Errorf("cannot create %s: %w", indexPath, err)
 	}
 	defer indexFile.Close()
 
-	fmt.Fprintf(indexFile, "# %s\n\n", om.siteKey)
+	fmt.Fprintf(indexFile, "# %s\n\n", siteKey)
 	fmt.Fprintf(indexFile, "> Crawled documentation from %s. %d pages.\n\n", domain, len(pages))
 	fmt.Fprintln(indexFile, "## Pages")
 	if len(pages) == 0 {
@@ -96,7 +106,10 @@ func (om *OutputManager) writeLLMsTxtFiles() {
 		fmt.Fprintf(indexFile, "- [%s](%s)\n", escapeLinkText(p.title), p.url)
 	}
 
-	om.log.Info(fmt.Sprintf("Wrote llms.txt (%d pages) and llms-full.txt to %s", len(pages), om.siteOutputDir))
+	if log != nil {
+		log.Info(fmt.Sprintf("Wrote llms.txt (%d pages) and llms-full.txt to %s", len(pages), outDir))
+	}
+	return nil
 }
 
 // escapeLinkText escapes brackets, backslashes, and newlines in markdown link

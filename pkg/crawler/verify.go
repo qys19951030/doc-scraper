@@ -257,7 +257,141 @@ func (v *Verifier) openIndex(idxPath string) (*index.Index, error) {
 // whose Markdown is missing entirely, a missing local image) stay in
 // Residual. The report lists findings, applied fixes, and what remains.
 func (v *Verifier) VerifyAndFix(ctx context.Context, idxPath string) (*VerifyReport, error) {
-	return nil, nil
+	v.indexPath = idxPath
+	man, err := v.loadManifest()
+	if err != nil {
+		return nil, fmt.Errorf("load manifest: %w", err)
+	}
+	disk, err := v.scanDiskPages()
+	if err != nil {
+		return nil, fmt.Errorf("scan markdown files: %w", err)
+	}
+
+	// Initial findings. The index may not exist yet; a fixing run creates it.
+	idx, err := v.openOrCreateIndex(idxPath)
+	if err != nil {
+		return nil, err
+	}
+	if idx != nil {
+		defer func() { _ = idx.Close() }()
+	}
+
+	findings := v.collectFindings(ctx, man, disk, idx)
+	report := v.newReport(true)
+	report.IndexPath = idxPath
+	report.Findings = groupFindings(findings)
+	report.FindingsCount = countEntries(report.Findings)
+
+	plan := v.planRepair(man, disk, findings)
+	if !v.planHasWork(plan) {
+		report.Fixes = nil
+		report.Residual = report.Findings
+		report.ResidualCount = report.FindingsCount
+		return report, nil
+	}
+
+	fixes, err := v.applyRepair(ctx, plan, man, idx)
+	if err != nil {
+		return nil, fmt.Errorf("repair: %w", err)
+	}
+	report.Fixes = fixes
+
+	// Re-verify from scratch against the rewritten on-disk artifacts.
+	repaired, err := v.Verify(ctx, idxPath)
+	if err != nil {
+		return nil, fmt.Errorf("re-verify: %w", err)
+	}
+	residual := map[string][]IssueEntry{}
+	mergeIssueMaps(residual, mapFromGroups(repaired.Findings))
+	// Issues repair cannot touch locally stay visible even though their
+	// manifest records were removed or were never present: a wholly missing
+	// page and a missing local image cannot be rebuilt from disk content.
+	mergeIssueMaps(residual, v.unrepairableFindings(findings))
+	report.Residual = dedupeGroups(groupFindings(residual))
+	report.ResidualCount = countEntries(report.Residual)
+	return report, nil
+}
+
+// dedupeGroups drops identical entries within each category so merging the
+// re-verification results with the unrepairable findings cannot double-count.
+func dedupeGroups(groups []IssueGroup) []IssueGroup {
+	for i := range groups {
+		seen := map[string]struct{}{}
+		entries := groups[i].Entries[:0]
+		for _, e := range groups[i].Entries {
+			key := e.Category + "|" + e.Path + "|" + e.URL
+			if _, dup := seen[key]; dup {
+				continue
+			}
+			seen[key] = struct{}{}
+			entries = append(entries, e)
+		}
+		groups[i].Entries = entries
+		groups[i].Count = len(entries)
+	}
+	return groups
+}
+
+// unrepairableFindings extracts the categories a fixing run can never clear
+// from local content: missing whole pages and missing local image files.
+func (v *Verifier) unrepairableFindings(findings map[string][]IssueEntry) map[string][]IssueEntry {
+	out := map[string][]IssueEntry{}
+	for _, cat := range []string{IssueMissingMarkdown, IssueMissingImage} {
+		if entries, ok := findings[cat]; ok {
+			out[cat] = append(out[cat], entries...)
+		}
+	}
+	return out
+}
+
+// mapFromGroups converts grouped findings back into the category->entries
+// map the check helpers produce.
+func mapFromGroups(groups []IssueGroup) map[string][]IssueEntry {
+	out := map[string][]IssueEntry{}
+	for _, g := range groups {
+		out[g.Category] = append(out[g.Category], g.Entries...)
+	}
+	return out
+}
+
+// planHasWork reports whether any repair action will run.
+func (v *Verifier) planHasWork(plan *repairPlan) bool {
+	return plan.rewriteJSONL || plan.rewriteLLMs || plan.rebuildIndex ||
+		len(plan.orphanRecords) > 0 || len(plan.hashUpdates) > 0 || len(plan.removedURLs) > 0
+}
+
+// collectFindings runs every check and merges their category maps.
+func (v *Verifier) collectFindings(ctx context.Context, man *manifestSnapshot, disk []diskPage, idx *index.Index) map[string][]IssueEntry {
+	findings := map[string][]IssueEntry{}
+	mergeIssueMaps(findings, v.checkMarkdownPresence(man, disk))
+	mergeIssueMaps(findings, v.checkFingerprints(man, disk))
+	mergeIssueMaps(findings, v.checkCrawlMeta(man))
+	mergeIssueMaps(findings, v.checkLLMsFiles(man))
+	mergeIssueMaps(findings, v.checkImages(man))
+	mergeIssueMaps(findings, v.checkIndex(ctx, man, idx))
+	return findings
+}
+
+// openOrCreateIndex opens the search index, creating an empty one during a
+// fixing run when its database file does not exist yet.
+func (v *Verifier) openOrCreateIndex(idxPath string) (*index.Index, error) {
+	if idxPath == "" {
+		return nil, nil
+	}
+	if _, err := os.Stat(idxPath); err != nil && errors.Is(err, fs.ErrNotExist) {
+		idx, openErr := index.Open(idxPath, v.appCfg.CrawlHistoryRetention, v.log)
+		if openErr != nil {
+			return nil, fmt.Errorf("create search index: %w", openErr)
+		}
+		return idx, nil
+	} else if err != nil {
+		return nil, fmt.Errorf("stat search index: %w", err)
+	}
+	idx, err := index.Open(idxPath, v.appCfg.CrawlHistoryRetention, v.log)
+	if err != nil {
+		return nil, fmt.Errorf("open search index: %w", err)
+	}
+	return idx, nil
 }
 
 // expectedMarkdownPath maps a page URL to its Markdown file under the output
