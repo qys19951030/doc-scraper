@@ -26,7 +26,7 @@ type repairPlan struct {
 	// whose body was edited on disk.
 	hashUpdates map[string]hashUpdate
 	// removedURLs lists manifest records with no Markdown file on disk.
-	removedURLs []string
+	removedURLs  []string
 	rewriteJSONL bool
 	rewriteLLMs  bool
 	rebuildIndex bool

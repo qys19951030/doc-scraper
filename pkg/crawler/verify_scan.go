@@ -299,7 +299,7 @@ func (v *Verifier) checkCrawlMeta(man *manifestSnapshot) map[string][]IssueEntry
 				Category: IssueCrawlMeta,
 				Path:     v.jsonl,
 				Detail: map[string]string{
-					"problem":            "summary page count does not match page records",
+					"problem":             "summary page count does not match page records",
 					"summary_total_pages": itoa(m.TotalPages),
 					"page_records":        itoa(len(man.pages)),
 					"summary_line":        itoa(man.metaLines[i] + 1),

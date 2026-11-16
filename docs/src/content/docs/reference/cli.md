@@ -98,6 +98,26 @@ In text output each snippet is printed on one line; `-json` keeps its line break
 | `-limit` | int | Maximum results to return (must be positive) | `10` |
 | `-json` | bool | Emit results as a JSON array instead of human-readable text | `false` |
 
+## `verify`
+
+```bash
+doc-scraper verify -site rust_cli_book
+doc-scraper verify -site rust_cli_book -fix
+```
+
+Checks one site's local output offline — `pages.jsonl`, the per-page Markdown tree, `llms.txt`/`llms-full.txt` and the search index under `state_dir` — without any network access. Every finding names the concrete page or file with its output-relative path and URL. The checks cover: manifest pages missing their Markdown file; Markdown files with no manifest record; disk bodies whose fingerprint disagrees with the manifest; a missing, duplicated, misplaced or wrong-count `crawl_meta` summary; `llms.txt`/`llms-full.txt` entries that are missing, extra or out of order; manifest-referenced local images that no longer exist; and search-index pages that are missing, stale or orphaned.
+
+`-fix` repairs everything rebuildable from what is already on disk: orphaned Markdown becomes manifest records, edited pages keep their disk body with the fingerprint updated (the original hash is listed in the report), surplus or missing manifest records are removed or added, both `llms` files are regenerated, and the search index is rebuilt from the repaired manifest. A wholly missing page or image cannot be reconstructed locally and is reported as residual rather than guessed at. A fixing run always re-verifies itself, and reruns are stable no-ops.
+
+The exit code distinguishes the outcomes for scripts: `0` when no issues remain, `4` when a read-only run found issues, and `5` when a fixing run finished but residual issues remain. Missing output directory, an unknown site key, an empty manifest or a manifest without `crawl_meta` fail up front with exit `1` before anything is modified.
+
+| Flag | Type | Description | Default |
+|------|------|-------------|---------|
+| `-config` | string | Path to config file | `config.yaml` |
+| `-site` | string | Site key from config (required) | |
+| `-fix` | bool | Repair locally rebuildable inconsistencies, then re-verify | `false` |
+| `-json` | bool | Emit the report as structured JSON instead of human-readable text | `false` |
+
 ## `mcp-server`
 
 Start the MCP server over the stdio transport. See [MCP tools](/doc-scraper/mcp/tools/) for what it exposes.

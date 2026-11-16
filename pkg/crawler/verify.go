@@ -84,9 +84,9 @@ type FixEntry struct {
 	Category string `json:"category"`
 	// Action is what the repair did ("add_record", "remove_record",
 	// "update_hash", "rewrite_file", "rebuild_index", ...).
-	Action string `json:"action"`
-	Path   string `json:"path,omitempty"`
-	URL    string `json:"url,omitempty"`
+	Action string            `json:"action"`
+	Path   string            `json:"path,omitempty"`
+	URL    string            `json:"url,omitempty"`
 	Detail map[string]string `json:"detail,omitempty"`
 }
 
@@ -94,15 +94,15 @@ type FixEntry struct {
 // Residual carry the same group shape, so a re-scan of the output directory
 // reproduces them.
 type VerifyReport struct {
-	SiteKey      string       `json:"site_key"`
-	OutputDir    string       `json:"output_dir"`
-	IndexPath    string       `json:"index_path,omitempty"`
-	Fixed        bool         `json:"fixed"`
-	Findings     []IssueGroup `json:"findings"`
-	Fixes        []FixEntry   `json:"fixes,omitempty"`
-	Residual     []IssueGroup `json:"residual,omitempty"`
-	FindingsCount int         `json:"findings_count"`
-	ResidualCount int         `json:"residual_count"`
+	SiteKey       string       `json:"site_key"`
+	OutputDir     string       `json:"output_dir"`
+	IndexPath     string       `json:"index_path,omitempty"`
+	Fixed         bool         `json:"fixed"`
+	Findings      []IssueGroup `json:"findings"`
+	Fixes         []FixEntry   `json:"fixes,omitempty"`
+	Residual      []IssueGroup `json:"residual,omitempty"`
+	FindingsCount int          `json:"findings_count"`
+	ResidualCount int          `json:"residual_count"`
 }
 
 // PreconditionError names the check that failed before any output was touched.
@@ -213,8 +213,10 @@ func (v *Verifier) Verify(ctx context.Context, idxPath string) (*VerifyReport, e
 	}
 	if idx != nil {
 		defer func() { _ = idx.Close() }()
-		mergeIssueMaps(findings, v.checkIndex(ctx, man, idx))
 	}
+	// A nil index (no database file) is a valid read-only state: checkIndex
+	// then reports every manifest page as absent from the index.
+	mergeIssueMaps(findings, v.checkIndex(ctx, man, idx))
 
 	report := v.newReport(false)
 	report.IndexPath = idxPath
